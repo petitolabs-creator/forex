@@ -1,0 +1,43 @@
+# Refresher: fetches rates from One-Frame, writes to Valkey, publishes to rates_updated (API pods sync via pub/sub).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: forex-refresher
+  namespace: forex
+  labels:
+    app: forex-refresher
+spec:
+  schedule: "*/4 * * * *"   # Every 4 minutes
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app: forex-refresher
+        spec:
+          restartPolicy: OnFailure
+          # imagePullSecrets:
+          #   - name: registry-auth-secret
+          containers:
+            - name: refresher
+              image: registry.leanstax.com/forex:latest
+              imagePullPolicy: Always
+              command: ["/app/entrypoint.sh", "refresher"]
+              env:
+                - name: VALKEY_URI
+                  value: "redis://valkey.forex.svc.cluster.local:6379"
+                - name: ONEFRAME_URL
+                  value: "http://one-frame.forex.svc.cluster.local:8080/rates"
+                - name: ONEFRAME_TOKEN
+                  value: "10dc303535874aeccc86a8251e6992f5"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 200m
+                  memory: 256Mi

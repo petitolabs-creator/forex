@@ -1,7 +1,7 @@
 package forex
 
 import scala.concurrent.ExecutionContext
-import cats.effect._
+import cats.effect.{ ConcurrentEffect, ContextShift, ExitCode, IO, IOApp, Timer }
 import forex.config._
 import fs2.Stream
 import org.http4s.blaze.server.BlazeServerBuilder
@@ -13,15 +13,16 @@ object Main extends IOApp {
 
 }
 
-class Application[F[_]: ConcurrentEffect: Timer] {
+class Application[F[_]: ConcurrentEffect: Timer](implicit cs: ContextShift[F]) {
 
   def stream(ec: ExecutionContext): Stream[F, Unit] =
     for {
       config <- Config.stream("app")
       module = new Module[F](config)
+      httpApp <- Stream.resource(module.createApp(ec))
       _ <- BlazeServerBuilder[F](ec)
             .bindHttp(config.http.port, config.http.host)
-            .withHttpApp(module.httpApp)
+            .withHttpApp(httpApp)
             .serve
     } yield ()
 
