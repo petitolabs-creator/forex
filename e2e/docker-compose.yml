@@ -1,0 +1,84 @@
+services:
+  valkey:
+    image: valkey/valkey:7
+    container_name: forex-valkey
+    # No host port: e2e talks via forex-valkey:6379 on internal network
+    networks:
+      - forex-test-network
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  one-frame:
+    image: paidyinc/one-frame
+    container_name: one-frame-service
+    # No host port: e2e/refresher talk via one-frame-service:8080 on internal network
+    networks:
+      - forex-test-network
+
+  refresher:
+    build:
+      context: ../forex-mtl
+      dockerfile: Dockerfile
+    container_name: forex-refresher
+    command: sh -c "sleep 15 && /app/entrypoint.sh refresher"
+    environment:
+      - VALKEY_URI=redis://forex-valkey:6379
+      - ONEFRAME_URL=http://one-frame-service:8080/rates
+      - ONEFRAME_TOKEN=10dc303535874aeccc86a8251e6992f5
+    networks:
+      - forex-test-network
+    depends_on:
+      valkey:
+        condition: service_healthy
+      one-frame:
+        condition: service_started
+    restart: "no"
+
+  forex-api:
+    build:
+      context: ../forex-mtl
+      dockerfile: Dockerfile
+    container_name: forex-api
+    command: /app/entrypoint.sh api
+    # No host port: e2e talks via forex-api:8080 on internal network
+    environment:
+      - VALKEY_URI=redis://forex-valkey:6379
+      - HTTP_HOST=0.0.0.0
+      - HTTP_PORT=8080
+    networks:
+      - forex-test-network
+    depends_on:
+      refresher:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    restart: "no"
+
+  e2e-tests:
+    profiles:
+      - e2e
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: forex-e2e-tests
+    depends_on:
+      - forex-api
+      # Do not depend on refresher: avoid starting a second run that overwrites Valkey
+      - valkey
+      - one-frame
+    command: sh -c "sleep 25 && python3 run_all_tests.py"
+    environment:
+      - FOREX_API_URL=http://forex-api:8080
+      - ONEFRAME_URL=http://one-frame-service:8080
+      - ONEFRAME_TOKEN=10dc303535874aeccc86a8251e6992f5
+      - VALKEY_HOST=forex-valkey
+      - VALKEY_PORT=6379
+    networks:
+      - forex-test-network
+
+networks:
+  forex-test-network:
+    driver: bridge
