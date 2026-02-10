@@ -1,0 +1,32 @@
+# One-Frame API (rate provider). Refresher CronJob calls this to fetch rates.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: one-frame
+  namespace: forex
+  labels:
+    app: one-frame
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: one-frame
+  template:
+    metadata:
+      labels:
+        app: one-frame
+    spec:
+      containers:
+        - name: one-frame
+          image: paidyinc/one-frame:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

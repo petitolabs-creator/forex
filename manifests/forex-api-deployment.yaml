@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forex-api
+  namespace: forex
+  labels:
+    app: forex-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: forex-api
+  template:
+    metadata:
+      labels:
+        app: forex-api
+    spec:
+      # Uncomment if registry.leanstax.com requires auth; create secret with:
+      # kubectl create secret docker-registry registry-auth-secret -n forex \
+      #   --docker-server=registry.leanstax.com --docker-username=admin --docker-password='...'
+      # imagePullSecrets:
+      #   - name: registry-auth-secret
+      containers:
+        - name: forex-api
+          image: registry.leanstax.com/forex:latest
+          imagePullPolicy: Always
+          command: ["/app/entrypoint.sh", "api"]
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: VALKEY_URI
+              value: "redis://valkey.forex.svc.cluster.local:6379"
+            - name: HTTP_HOST
+              value: "0.0.0.0"
+            - name: HTTP_PORT
+              value: "8080"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /rates?from=USD&to=USD
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /rates?from=USD&to=USD
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5

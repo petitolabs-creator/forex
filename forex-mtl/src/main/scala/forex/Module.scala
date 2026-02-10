@@ -1,37 +1,36 @@
 package forex
 
-import cats.effect.{ Concurrent, Timer }
+import cats.effect.{ ConcurrentEffect, ContextShift, Resource, Timer }
 import forex.config.ApplicationConfig
 import forex.http.rates.RatesHttpRoutes
 import forex.services._
+import forex.services.cache.RatesCache
+import forex.services.valkey.ValkeyClient
 import forex.programs._
 import org.http4s._
 import org.http4s.implicits._
 import org.http4s.server.middleware.{ AutoSlash, Timeout }
 
-class Module[F[_]: Concurrent: Timer](config: ApplicationConfig) {
+import scala.concurrent.ExecutionContext
 
-  private val ratesService: RatesService[F] = RatesServices.dummy[F]
+class Module[F[_]: ConcurrentEffect: ContextShift: Timer](config: ApplicationConfig) {
 
-  private val ratesProgram: RatesProgram[F] = RatesProgram[F](ratesService)
-
-  private val ratesHttpRoutes: HttpRoutes[F] = new RatesHttpRoutes[F](ratesProgram).routes
-
-  type PartialMiddleware = HttpRoutes[F] => HttpRoutes[F]
-  type TotalMiddleware   = HttpApp[F] => HttpApp[F]
-
-  private val routesMiddleware: PartialMiddleware = {
-    { http: HttpRoutes[F] =>
-      AutoSlash(http)
-    }
+  def createApp(implicit ec: ExecutionContext): Resource[F, HttpApp[F]] = {
+    val _ = ec // kept for API compatibility
+    for {
+      valkeyClient <- ValkeyClient.make[F](config.valkey.uri)
+      syncStream   <- ValkeyClient.subscribeRatesUpdated[F](config.valkey.uri)
+      cacheAndJob  <- Resource.eval(RatesCache.make[F](valkeyClient, syncStream))
+      (cache, syncJob) = cacheAndJob
+      _ <- Resource.make(ConcurrentEffect[F].start(syncJob))(_.cancel)
+    } yield httpApp(cache)
   }
 
-  private val appMiddleware: TotalMiddleware = { http: HttpApp[F] =>
-    Timeout(config.http.timeout)(http)
+  private def httpApp(cache: RatesCache[F]): HttpApp[F] = {
+    val ratesService = RatesServices.cached[F](cache)
+    val ratesProgram = RatesProgram[F](ratesService)
+    val routes = new RatesHttpRoutes[F](ratesProgram).routes
+    Timeout(config.http.timeout)(AutoSlash(routes).orNotFound)
   }
-
-  private val http: HttpRoutes[F] = ratesHttpRoutes
-
-  val httpApp: HttpApp[F] = appMiddleware(routesMiddleware(http).orNotFound)
 
 }
